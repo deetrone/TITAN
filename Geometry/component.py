@@ -29,15 +29,16 @@ class Component_list():
         self.object = []
         self.id = 1
         
-    def insert_component(self,filename, file_type, inner_stl = '', id = 0, binary = True, trigger_type = 'Indestructible', 
-                         trigger_value = 0,fenics_bc_id = -1, material = 'Unittest', temperature = 300, options = None, 
-                         global_ID = 0, bloom_config = [False, 0, 0, 0], enclosure=0, alpha = 1.0):
+    def insert_component(self,filename, file_type, inner_stl = '', id = 0, binary = True, trigger_type = 'Indestructible',
+                         trigger_value = 0,fenics_bc_id = -1, material = 'Unittest', temperature = 300, options = None,
+                         global_ID = 0, bloom_config = [False, 0, 0, 0], enclosure=0, alpha = 1.0, component_type = None,
+                         marker = None):
 
-        self.object.append(Component(filename, file_type, inner_stl = inner_stl, id = self.id, 
+        self.object.append(Component(filename, file_type, inner_stl = inner_stl, id = self.id,
                            binary = binary, temperature = temperature, trigger_type = trigger_type,
-                           trigger_value = trigger_value, fenics_bc_id = fenics_bc_id, material = material, 
-                           options = options, global_ID = global_ID, bloom_config = bloom_config, 
-                           enclosure=enclosure, alpha=alpha))
+                           trigger_value = trigger_value, fenics_bc_id = fenics_bc_id, material = material,
+                           options = options, global_ID = global_ID, bloom_config = bloom_config,
+                           enclosure=enclosure, alpha=alpha, component_type = component_type, marker = marker))
         self.id += 1
 
 class Component():
@@ -46,10 +47,13 @@ class Component():
         Class to store the information of a singular component.
     """
     
+    #: Set of valid AERIS component classes a Primitive can be tagged as
+    COMPONENT_TYPES = ("watertank", "fueltank", "battery")
+
     def __init__(self,filename, file_type, inner_stl = '', id = 0, binary = True, temperature = 300,
                  trigger_type = 'Indestructible', trigger_value = 0, fenics_bc_id = -1, material = 'Unittest',
-                 v0 = [], v1 = [], v2 = [], parent_id = None, parent_part = None, options = None, global_ID = 0, 
-                 bloom_config = [False, 0, 0, 0], enclosure = 0, alpha = 1.0):
+                 v0 = [], v1 = [], v2 = [], parent_id = None, parent_part = None, options = None, global_ID = 0,
+                 bloom_config = [False, 0, 0, 0], enclosure = 0, alpha = 1.0, component_type = None, marker = None):
 
         print("Generating Body: ", filename)
         
@@ -58,7 +62,40 @@ class Component():
 
         #: [str] Type of the component (joint, primitive). Several sub-components can be used to form a larger component
         self.type = file_type
-    
+
+        #: [str] AERIS component class (watertank, fueltank, battery) or None if the component
+        #: is not one of these. Used to attach AERIS failure/passivation models to the component.
+        if component_type is not None:
+            component_type = component_type.strip().lower()
+            if component_type not in self.COMPONENT_TYPES:
+                raise ValueError(
+                    "Component '{}' has unknown COMPONENT_TYPE '{}'. "
+                    "Valid options are: {}.".format(
+                        filename, component_type, ", ".join(self.COMPONENT_TYPES)
+                    )
+                )
+        self.component_type = component_type
+
+        #: [str] Marker name of the component as declared in the [Objects] block of the
+        #: config file (e.g. "cube_a"). Used to locate its [Parameters.<marker>] section.
+        self.marker = marker
+
+        #: [dict] AERIS component parameters (field name -> float): baselines from the
+        #: [Parameters.<marker>] section, overwritten per Monte Carlo sample by the
+        #: UQMapper. Empty for untagged/regular components.
+        self.uq_parameters = {}
+
+        #: [bool] Set by the AERIS failure tree when this component's limit state is
+        #: crossed. Fragmentation separates a failed Primitive from its assembly.
+        self.failed = False
+
+        #: [str] Which AERIS failure mode fired (burst, bleve, failure), or None.
+        self.failure_mode = None
+
+        #: [bool] Latch so a failed component is only separated once; without it the
+        #: component would re-trigger every iteration after failing.
+        self.failure_separated = False
+
         #if self.type == "Joint":
         
         #: [str] Type of trigger for type joint (Altitude, Temperature, Stress)

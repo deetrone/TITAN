@@ -26,6 +26,8 @@ from copy import deepcopy
 import subprocess
 import os
 
+from Failure.failure import AerisBoomModelParameters
+
 def create_assembly_flag(list_bodies, Flags):
     """
     Generates the assembly connectivity matrix
@@ -108,6 +110,12 @@ class Assembly_list():
 
         #: [array] List of the linkage information between the different components
         self.connectivity = np.array([], dtype = int)
+
+        #: [dataclass] AERIS-specific attribute holding AERIS-BOOM model parameters
+        self.aerisboom_parameters = AerisBoomModelParameters()
+
+        #: [int] Seed (for MC sample) : devnote: check that -1 is best for default
+        self.seed = 0
 
     def create_assembly(self, connectivity, aoa = 0.0, slip = 0.0, roll = 0.0, options = None):            
         """

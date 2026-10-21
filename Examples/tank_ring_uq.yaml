@@ -1,0 +1,87 @@
+## Monte Carlo campaign for the tank_ring AERIS failure-tree case.
+##
+## All uncertainty is declared here, the same way as the rest of TITAN's UQ:
+## `parameters` map a name to [assembly_index, distribution_index, index_in_dist],
+## and `distributions` are scipy.stats distributions (plus the custom
+## `pbox_normal` and `quat_rotation`). See Uncertainty/UQ_parameter_handbook.md.
+##
+## Two sources of scatter combine to give a population of craft:
+##  - the entry state (velocity / gamma / chi), so each sample flies a different
+##    trajectory;
+##  - the AERIS failure-tree component parameters, named <field>__<marker> (the
+##    marker is the [Objects] name, e.g. Tank_Yellow_0). These override the
+##    baseline in the .cfg's [Parameters.<marker>] section once per sample. A tank
+##    whose sampled burst pressure is low enough bursts, which separates it from
+##    the ring and changes the trajectory of what remains -- so the failure feeds
+##    back into the propagation rather than just being reported alongside it.
+##
+## Angles are RADIANS here, unlike the degrees in the .cfg.
+## gamma -0.0256181 rad = -1.4678 deg;  chi 2.458679 rad = 140.8619 deg.
+## Do not add quat_* parameters alongside gamma/chi: both drive the
+## orientation_callback, which recomputes the quaternion from the flight angles.
+
+parameters:
+  # --- entry state ---
+  velocity: [0, 0, 0]
+  gamma:    [0, 1, 0]
+  chi:      [0, 2, 0]
+
+  # --- AERIS model parameters ----
+  tankSLTCoefficient: [0, 9, 0]
+  batteryHeatRateThresholdNMC: [0, 10, 0]
+
+  # --- AERIS failure-tree burst pressures (one distribution each) ---
+  nominalBurstPressure__Tank_Yellow_0: [0, 3, 0]   # imprecise -> p-box double-loop
+  nominalBurstPressure__Tank_Yellow_3: [0, 4, 0]   # precise normal
+  nominalBurstPressure__Tank_Green_0:  [0, 5, 0]   # precise normal
+  nominalBurstPressure__Tank_Green_2:  [0, 6, 0]   # uniform
+
+  # --- ultimate tensile strength, independent per tank (one multivariate normal
+  #     with diagonal covariance; std 20 MPa about the 630 MPa reference) ---
+  # devnote: turned off since UTS is deprecated
+  #nominalUltimateTensileStrength__Tank_Yellow_0: [0, 7, 0]
+  #nominalUltimateTensileStrength__Tank_Yellow_3: [0, 7, 1]
+  #nominalUltimateTensileStrength__Tank_Green_0:  [0, 7, 2]
+  #nominalUltimateTensileStrength__Tank_Green_2:  [0, 7, 3]
+
+  # --- battery capacity (inert branch, exercised for completeness) ---
+  nominalCapacity__Tank_Large_Black_0: [0, 8, 0]
+
+distributions:
+  0:
+    norm: {loc: 7564.30, scale: 25.0}
+  1:
+    norm: {loc: -0.0256181, scale: 0.00175}   # ~0.1 deg
+  2:
+    norm: {loc: 2.458679, scale: 0.0087}      # ~0.5 deg
+  3:
+    pbox_normal: {mu_lo: 1.570e6, mu_hi: 1.580e6, std_lo: 1.2e4, std_hi: 2.0e4}
+  4:
+    norm: {loc: 1.875e6, scale: 1.5e4}
+  5:
+    norm: {loc: 2.422e5, scale: 1.0e3}
+  6:
+    uniform: {loc: 2.405e5, scale: 3.5e3}     # U(2.405e5, 2.440e5): loc + scale = upper
+  7:
+    multivariate_normal:
+      mean: [630, 630, 630, 630]
+      cov:
+        - [400, 0,   0,   0]
+        - [0,   400, 0,   0]
+        - [0,   0,   400, 0]
+        - [0,   0,   0,   400]
+  8:
+    norm: {loc: 50, scale: 5}
+  9:
+    uniform: {loc: 0.87, scale: 0.04}
+  10:
+    norm: {loc: 5, scale: 5}
+
+## Reported per object at the last iteration it appears in, so a tank that bursts
+## and separates shows up with its own divergent altitude/lat/lon.
+outputs:
+  Altitude: all
+  Latitude: all
+  Longitude: all
+  Mass: all
+  Tmax: all

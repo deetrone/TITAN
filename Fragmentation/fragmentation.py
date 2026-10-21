@@ -213,7 +213,40 @@ def demise_components(titan, i, joints_id, options):
 
         from Dynamics.propagation import construct_state_vector
         construct_state_vector(titan.assembly[-1])
-        titan.assembly[-1].unmodded_angles = titan.assembly[i].unmodded_angles
+
+        #Fragmentation is checked before the first propagation step, so a fragmentation
+        #on iteration 0 finds no unmodded_angles to inherit yet. Leaving it unset lets
+        #propagation lazily initialise it from the roll/pitch/yaw copied above.
+        if hasattr(titan.assembly[i], 'unmodded_angles'):
+            titan.assembly[-1].unmodded_angles = titan.assembly[i].unmodded_angles
+
+
+def separate_primitive(assembly, obj):
+
+    """
+    Detach a primitive from the assembly it belongs to.
+
+    Removes every direct (non-joint) connectivity row involving the object, so
+    that the regrouping in demise_components leaves it as its own assembly. The
+    caller is responsible for flagging primitive_separation and for latching the
+    trigger so this only happens once.
+
+    Parameters
+    ----------
+    assembly: Assembly
+        Object of class Assembly the primitive currently belongs to
+    obj: Component
+        Object of class Component to detach
+    """
+
+    con_delete = []
+
+    for index, con in enumerate(assembly.connectivity):
+        if con[2] == 0 and obj.id in con:
+            con_delete.append(index)
+
+    assembly.connectivity = np.delete(assembly.connectivity, con_delete, axis = 0)
+    assembly.shape = (-1,3)
 
 
 def check_breakup_v2(titan, options):
@@ -572,19 +605,22 @@ def fragmentation(titan, options):
                 if obj.trigger_type.lower() == 'altitude' and titan.assembly[it].trajectory.altitude <= obj.trigger_value:
 
                     print ('Primitive altitude Fragmentation occured ')
-                    con_delete = []
-
-                    for index, con in enumerate(titan.assembly[it].connectivity):
-                        if con[2] == 0 and obj.id in con:
-                            con_delete.append(index)
-                    
-                    titan.assembly[it].connectivity = np.delete(titan.assembly[it].connectivity, con_delete, axis = 0)
-                    titan.assembly[it].shape = (-1,3)
+                    separate_primitive(titan.assembly[it], obj)
 
                     primitive_separation = True
 
                     #Removing the trigger once activated
                     obj.trigger_type = ""
+
+                elif obj.failed and not obj.failure_separated:
+
+                    print ('AERIS {} Fragmentation occured for {}'.format(obj.failure_mode, obj.name))
+                    separate_primitive(titan.assembly[it], obj)
+
+                    primitive_separation = True
+
+                    #Latching so the component is only separated once
+                    obj.failure_separated = True
 
                 """    
                 elif obj.trigger_type == 'Stress' and assembly.trajectory.stress_ratio >= 0.:

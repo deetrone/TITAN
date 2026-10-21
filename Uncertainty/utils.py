@@ -18,12 +18,27 @@
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 import numpy as np
+import re
 import yaml
 import pandas as pd
 from collections.abc import MutableSequence
 import pathlib
-try: from yaml import CLoader as Loader
-except: from yaml import Loader
+
+# PyYAML follows YAML 1.1, whose float resolver only accepts scientific notation
+# with a SIGNED exponent (1.2e+4); it silently leaves 1.2e4 as a string. Burst
+# pressures and the like are naturally written 1.57e6, so widen the resolver on a
+# dedicated loader used for the UQ yaml. Subclassing keeps this off the shared
+# SafeLoader. (The nested cov lists parse fine either way.)
+from yaml import SafeLoader as _BaseUQLoader
+class UQLoader(_BaseUQLoader): pass
+UQLoader.add_implicit_resolver('tag:yaml.org,2002:float',
+    re.compile(r'''^(?:[-+]?(?:[0-9][0-9_]*)\.[0-9_]*(?:[eE][-+]?[0-9]+)?
+                    |[-+]?(?:[0-9][0-9_]*)(?:[eE][-+]?[0-9]+)
+                    |\.[0-9_]+(?:[eE][-+]?[0-9]+)?
+                    |[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\.[0-9_]*
+                    |[-+]?\.(?:inf|Inf|INF)
+                    |\.(?:nan|NaN|NAN))$''', re.X),
+    list('-+0123456789.'))
 
 from Uncertainty import mappings as ma
 class UQMapper(MutableSequence):
@@ -60,7 +75,7 @@ class UQMapper(MutableSequence):
             raise Exception('Error setting UQ parameter {} with error: {}'.format(idx,e))
         
     def parse_uq_yaml(self, titan, filepath):
-        with open(str(pathlib.Path(filepath).resolve()),'r') as f: uq_yaml = yaml.load(f,Loader)
+        with open(str(pathlib.Path(filepath).resolve()),'r') as f: uq_yaml = yaml.load(f,UQLoader)
 
         parameters = uq_yaml['parameters']
         distributions_dict = uq_yaml['distributions']
@@ -94,6 +109,7 @@ class UQMapper(MutableSequence):
         self.state_info = {}
         self.state_info['seed'] = seed
         titan.rng = np.random.RandomState(seed)
+        titan.seed = seed
         sample_out = []
         assem_ids = [[] for _ in range(len(self.callback_flags))]
 
@@ -226,11 +242,84 @@ def get_component_map(assembly_data, component_list):
 
     return last_obj_data.set_index('Obj_name')['Assembly_ID'].to_dict()
 
-def collate_QoI(seedlist, base_folder, campaign_seed = 0):
+def collate_QoI(seedlist, base_folder, subfolder):
     root_df = pd.DataFrame()
     for i_sample, seed in enumerate(seedlist):
-        csv_path = base_folder+'/Campaign_{}/MC_{}/QoI.csv'.format(campaign_seed, i_sample)
+        csv_path = base_folder+subfolder+'/MC_{}/QoI.csv'.format(i_sample)
         df = pd.read_csv(str(pathlib.Path(csv_path).resolve()))
         root_df = pd.concat([root_df,df])
-    output_path = base_folder+'/Campaign_{}/QoI.csv'.format(campaign_seed)
+    output_path = base_folder+subfolder+'/QoI.csv'
     root_df.to_csv(str(pathlib.Path(output_path).resolve()))
+
+def collate_failures(seedlist, base_folder, subfolder):
+    """Aggregate the AERIS failure events of one sub-campaign.
+
+    Writes the per-sample events (failures.csv) and a per-component summary
+    (failure_summary.csv), in which the failure probability is the fraction of
+    samples whose limit state was crossed on the trajectory actually propagated.
+    """
+    root_df = pd.DataFrame()
+    for i_sample, seed in enumerate(seedlist):
+        csv_path = base_folder+subfolder+'/MC_{}/Failure/failure_events.csv'.format(i_sample)
+        if not pathlib.Path(csv_path).exists(): continue # sample errored; excluded from the statistics
+        df = pd.read_csv(str(pathlib.Path(csv_path).resolve()))
+        df['Sample'] = i_sample
+        df['Seed'] = seed
+        root_df = pd.concat([root_df,df])
+
+    if root_df.empty:
+        print('No failure events to collate for {}'.format(subfolder))
+        return
+
+    root_df.to_csv(str(pathlib.Path(base_folder+subfolder+'/failures.csv').resolve()), index=False)
+
+    summary = []
+    for component, group in root_df.groupby('Component'):
+        failed = group[group['Mode']!='none']
+        summary.append({'Component': component,
+                        'Samples': len(group),
+                        'Failed': len(failed),
+                        'P_fail': len(failed)/len(group) if len(group) else float('nan'),
+                        'Mean_failure_time': failed['Time'].mean() if len(failed) else float('nan'),
+                        'Mean_failure_temperature': failed['Temperature'].mean() if len(failed) else float('nan')})
+    summary_df = pd.DataFrame(summary)
+    summary_df.to_csv(str(pathlib.Path(base_folder+subfolder+'/failure_summary.csv').resolve()), index=False)
+    print('\nFailure summary for {}:'.format(subfolder))
+    print(summary_df.to_string(index=False))
+
+def collate_failure_bounds(base_folder, campaign_folder, subfolders):
+    """Bracket each component's failure probability across the corner sub-campaigns.
+
+    With imprecise inputs (a p-box or a Dempster-Shafer structure) there is no
+    single failure probability, only the interval the corners span. The corners
+    are the extremes of the epistemic uncertainty, so given monotonic limit
+    states the smallest and largest P_fail across them are the belief and
+    plausibility of failure. Writes failure_bounds.csv at the campaign root.
+    """
+    frames = []
+    for subfolder in subfolders:
+        csv_path = base_folder+subfolder+'/failure_summary.csv'
+        if not pathlib.Path(csv_path).exists(): continue # sub-campaign produced nothing
+        df = pd.read_csv(str(pathlib.Path(csv_path).resolve()))
+        df['Corner'] = subfolder.rsplit('/',maxsplit=1)[-1]
+        frames.append(df)
+
+    if not frames:
+        print('No failure summaries to bracket for {}'.format(campaign_folder))
+        return
+
+    bounds = []
+    for component, group in pd.concat(frames).groupby('Component'):
+        group = group.reset_index(drop=True)
+        lo = group.loc[group['P_fail'].idxmin()]
+        hi = group.loc[group['P_fail'].idxmax()]
+        bounds.append({'Component': component,
+                       'Belief': lo['P_fail'],
+                       'Plausibility': hi['P_fail'],
+                       'Belief_corner': lo['Corner'],
+                       'Plausibility_corner': hi['Corner'],
+                       'Corners': len(group)})
+    bounds_df = pd.DataFrame(bounds)
+    bounds_df.to_csv(str(pathlib.Path(base_folder+campaign_folder+'/failure_bounds.csv').resolve()), index=False)
+    print('\nFailure probability bounds across {} corners:'.format(len(frames)))
+    print(bounds_df.to_string(index=False))
