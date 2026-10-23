@@ -114,7 +114,7 @@ class Assembly_list():
         self.aerisboom_parameters = AerisBoomModelParameters()
 
         #: [int] Seed (for MC sample) : devnote: could use 0 for deterministic, only used for aeris-boom
-        self.seed = dt.now().microseconds
+        self.seed = dt.now().microsecond
 
     def create_assembly(self, connectivity, aoa = 0.0, slip = 0.0, roll = 0.0, options = None):            
         """Creates the assembly list

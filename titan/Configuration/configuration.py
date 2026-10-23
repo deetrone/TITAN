@@ -1436,11 +1436,19 @@ def read_geometry(configParser, options):
                 if options.pato.flag and bloom[0] == False:
                     print('Need to set up BLOOM if using PATO!'); exit()
 
+                try:
+                    component_type = [
+                        s for s in value if "component_type=" in s.lower()
+                    ][0].split("=")[1]
+                except:
+                    component_type = None
+
                 if object_type == 'Primitive':
                     objects.insert_component(filename = object_path, file_type = object_type, inner_stl = inner_path, 
                                              trigger_type = trigger_type, trigger_value = float(trigger_value), 
                                              fenics_bc_id = fenics_bc_id,  material = material, temperature = temperature, 
                                              options = options, global_ID = obj_global_ID, bloom_config = bloom, alpha=alpha, 
+                                             component_type=component_type, marker=name,
                                              mixture=mixture, mass_fractions=mass_fraction, species=species)
 
                 if object_type == 'Joint':
@@ -1481,7 +1489,8 @@ def read_geometry(configParser, options):
                             trigger_type = trigger_type, trigger_value = float(trigger_value), 
                             fenics_bc_id = fenics_bc_id, material = material, temperature = temperature, 
                             options = options, global_ID = obj_global_ID, bloom_config = bloom, 
-                            explosive_parameters = explosive_parameters, alpha = alpha)
+                            explosive_parameters = explosive_parameters, alpha = alpha,
+                            component_type=component_type, marker=name)
 
 
                 print('bloom:', bloom)

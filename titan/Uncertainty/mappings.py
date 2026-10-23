@@ -109,6 +109,7 @@ def get_component_index_from_name(name : str, titan, assembly_index=0) -> int:
         # Tank_Yellow_0, which is how the AERIS failure tree names its components).
         # configparser lowercases the marker, so compare it case-insensitively.
         marker = getattr(component, "marker", None)
+
         if name in component.name or (
             marker is not None and name.lower() == marker.lower()
         ):

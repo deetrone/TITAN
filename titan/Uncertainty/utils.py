@@ -131,11 +131,11 @@ class UQMapper(MutableSequence):
             callback_flags = [param in cb for cb in list(ma.callbacks.values())]
             self.append([param, address, assignment, code, callback_flags])
 
-            for i_distri, distri in distributions_dict.items():
-                distri_name = list(distri.keys())[0]
-                if distri_name not in ma.available_distris.keys(): 
-                    raise Exception('Could not find distribution {}'.format(distri_name))
-                self.samplers.append(ma.available_distris[distri_name](**distri[distri_name]))
+        for i_distri, distri in distributions_dict.items():
+            distri_name = list(distri.keys())[0]
+            if distri_name not in ma.available_distris.keys(): 
+                raise Exception('Could not find distribution {}'.format(distri_name))
+            self.samplers.append(ma.available_distris[distri_name](**distri[distri_name]))
 
 
     def map_from_seed(self, seed, titan, options):

@@ -89,7 +89,7 @@ def _load_api():
         return _api, _DramaPrimitive
 
     _here = os.path.dirname(os.path.abspath(__file__))
-    boom_root = os.path.join(_here, "..", "aeris-boom")
+    boom_root = os.path.join(_here, "../..", "aeris-boom") # devnote: extra .. since now we are in titan
     boom_python = os.path.join(boom_root, "pyaeris_boum")
     if not os.path.isdir(boom_python):
         boom_python = os.path.join(boom_root, "aeris-boom", "python")

@@ -33,7 +33,7 @@ except: from yaml import Loader
 from ..__main__ import loop
 from ..Configuration.configuration import read_config_file
 from ..Uncertainty.utils import UQMapper, report_outputs_from_csv, collate_QoI, collate_failures, collate_failure_bounds
-from ..Dynamics.propagation import collect_state_vectors
+from ..Dynamics.propagation import collect_state_vectors, construct_state_vector
 
 def campaign_folder(prime_seed):
     """Root output folder for a campaign, relative to the base output folder."""
@@ -56,6 +56,7 @@ def _epistemic_samplers(uq_mapper):
     p-boxes and Dempster-Shafer structures. Returns ``[(sampler_index, sampler),
     ...]``; empty for an ordinary campaign.
     """
+
     return [(j, s) for j, s in enumerate(uq_mapper.samplers)
             if getattr(s, 'n_corners', 1) > 1]
 
@@ -127,7 +128,7 @@ def run(filename:str,n_samples:int):
                 print('Beginning Serial Campaign...')
                 new_titan = copy.deepcopy(base_titan)
                 new_options = copy.deepcopy(base_options)
-                wrapper(new_titan, new_options, i_sample, seed)
+                wrapper(new_titan, new_options, i_sample, seed, subfolder)
                 del new_titan, new_options
         collate_QoI(seedlist, base_folder, prime_seed)
         if base_options.enable_failure_tree:
@@ -158,8 +159,9 @@ def wrapper(titan, options, i_sample: int, seed: int, subfolder):
     options.clean_up_folders()
     options.create_output_folders()
     component_list = []
-    collect_state_vectors(titan, options)
-    for _assembly in titan.assembly: 
+    #collect_state_vectors(titan, options) # devnote: new version
+    for _assembly in titan.assembly:
+        construct_state_vector(_assembly)  # devnote: old version
         [component_list.append(comp.name) for comp in _assembly.objects]
     state_info = titan.uq_mapper.map_from_seed(seed, titan, options)
     write_datafile(options.output_folder, i_sample, state_info)

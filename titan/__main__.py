@@ -30,7 +30,7 @@ from .Structural import structural
 from pathlib import Path
 
 
-def loop(options: configuration.Options = [], titan: assembly.Assembly_list = []):
+def loop(options = [], titan = []):
     """Simulation loop for time propagation
     :param options: Base TITAN options
     :type options: Options,
@@ -57,7 +57,7 @@ def loop(options: configuration.Options = [], titan: assembly.Assembly_list = []
 
     failure_engine = None
     if options.enable_failure_tree:
-        from Failure import failure
+        from .Failure import failure
 
         failure_engine = failure.FailureEngine(options, titan)
 
