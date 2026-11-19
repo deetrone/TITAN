@@ -116,6 +116,9 @@ class Assembly_list():
         #: [int] Seed (for MC sample) : devnote: could use 0 for deterministic, only used for aeris-boom
         self.seed = dt.now().microsecond
 
+        #: [?] Container for amc_api object. Loaded in main if AMC-1 is being used. (AERIS)
+        self.amc_api = None
+
     def create_assembly(self, connectivity, aoa = 0.0, slip = 0.0, roll = 0.0, options = None):            
         """Creates the assembly list
 :param connectivity: Value for connectivity.
@@ -583,6 +586,10 @@ class Assembly():
                     self.ablation_mode = 'tetra'
             else:
                 self.ablation_mode = '0d'
+
+        elif options.thermal.ablation_mode.lower() == '0d_amc': #devnote: check if correct?
+            self.ablation_mode = '0d_amc'
+
         elif options.thermal.ablation_mode.lower() == 'byproducts':
             self.ablation_mode = 'byproducts'
             self.mDotMelt = np.zeros(len(self.mesh.facets))
@@ -600,7 +607,7 @@ class Assembly():
                 self.updated_gas_density = np.zeros(len(self.mesh.facets))
                 self.LOS = np.zeros(len(self.mesh.facets))
 
-        else: raise ValueError("Ablation mode has to be Tetra, 0D or PATO")
+        else: raise ValueError("Ablation mode has to be Tetra, 0D or PATO, or 0d_amc")
 
         self.distance_travelled = 0
 

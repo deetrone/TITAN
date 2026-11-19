@@ -159,9 +159,9 @@ def wrapper(titan, options, i_sample: int, seed: int, subfolder):
     options.clean_up_folders()
     options.create_output_folders()
     component_list = []
-    #collect_state_vectors(titan, options) # devnote: new version
+    collect_state_vectors(titan, options) # devnote: new version
     for _assembly in titan.assembly:
-        construct_state_vector(_assembly)  # devnote: old version
+        #construct_state_vector(_assembly)  # devnote: old version
         [component_list.append(comp.name) for comp in _assembly.objects]
     state_info = titan.uq_mapper.map_from_seed(seed, titan, options)
     write_datafile(options.output_folder, i_sample, state_info)

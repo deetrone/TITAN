@@ -61,6 +61,9 @@ def loop(options = [], titan = []):
 
         failure_engine = failure.FailureEngine(options, titan)
 
+    if options.thermal.ablation_mode == "0d_amc":
+        titan.amc_api, _ = thermal._load_AMC_api()
+
     if options.dynamic_plots:
         plot = dynamic_plots.initialise_figs(titan, options)
     if options.postproc_in_loop is not None:

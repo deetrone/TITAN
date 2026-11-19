@@ -32,6 +32,73 @@ from ..Geometry.tetra import inertia_tetra
 import requests
 import subprocess
 cutoff = 0.0
+import time
+
+# devnote: UNUSED: API now loaded only once, and api object attached to titan
+# aeris_amc API handle, populated on first use by _load_api(). 
+#_api = None
+#_bprime_tables_root = None
+
+# AMC-1 material dict used when calling compute per object
+# devnote: based on material_database_new.xml + ESTIMATE.xml
+amc_material_map= {
+    "drama-AA7075": "AA7075",
+    "drama-A316_Semi-Empirical": "A316",
+    "drama-TiAl6v4_Semi-Empirical": "TiAl6V4",
+    "drama-HC-CFRP-4ply": "CFRP",
+    "drama-FusedSilicaGlass": "FusedSilicaGlass",
+    "drama-Carbon-Carbon": "Carbon-Carbon",
+    "drama-HC-CFRP-8ply": "CFRP",
+    "drama-CFRP": "CFRP",
+    "drama-TiAl6v4": "TiAl6V4",
+    "drama-HC-AA7075": "AA7075",
+    "drama-A316": "A316",
+    "drama-Gfrp": "GFRP",
+    "drama-GFRPProxy": "GFRP", # metal proxy 
+}
+
+# AMC-1 material list used for initialisation
+#devnote: all available in AMC-1
+amc_material_list =  [
+    "AA7075",
+    "A316",
+    "TiAl6V4",
+    "CFRP",
+    "GFRP",
+    "FusedSilicaGlass",
+    "Carbon-Carbon",
+]
+
+def _load_AMC_api():
+
+    """Import and return aeris_amc API. Similar approach as for aerisboom"""
+
+    # devnote: removed all global, related variable assignment, check for reimport etc
+    # devnote: could add optional arguments for different module and table paths
+    _here = os.path.dirname(os.path.abspath(__file__))
+    aeris_amc_root = os.path.join(_here, "../..", "aeris-amc-1") # devnote: extra .. since now we are in titan
+    aeris_amc_python = os.path.join(aeris_amc_root, "python")
+    aeris_amc_tables = os.path.join(aeris_amc_root ,"AERIS_ABLATION_DATA/Tables") # devnote: hardcode this for now
+    if aeris_amc_python not in sys.path:
+        sys.path.insert(0, aeris_amc_python)
+
+    try:
+        import aeris_amc
+    except ImportError as exc:
+        raise ImportError(
+            "The 'aeris_amc' extension could not be imported from {}. Ensure it is built for the "
+            "Python interpreter running TITAN. Original error: {}".format(os.path.normpath(aeris_amc_python), exc)
+        ) from exc
+    
+    #initialize all materials
+    for mat in amc_material_list:
+
+        if mat == "CFRP" or mat == "GFRP":
+            aeris_amc.initialize_pyrolyzing_database(aeris_amc_tables, mat)
+        else:
+            aeris_amc.initialize_non_pyrolyzing_database(aeris_amc_tables, mat)
+
+    return aeris_amc, aeris_amc_tables
 
 def compute_thermal(titan, options):
     """Documentation for the function.
@@ -45,13 +112,123 @@ def compute_thermal(titan, options):
             compute_thermal_tetra(titan = titan, options = options, dt=thermal_delta_t)
         elif options.thermal.ablation_mode == "0d":
             compute_thermal_0D(titan = titan, options = options, dt=thermal_delta_t)
+        elif options.thermal.ablation_mode == "0d_amc": ## use AERIS-AMC-1 
+            compute_thermal_0D_AMC(titan = titan, options = options, dt=thermal_delta_t)
         elif options.thermal.ablation_mode == "pato":
             compute_thermal_PATO(titan = titan, options = options)
         elif options.thermal.ablation_mode == "byproducts":
             compute_thermal_byproducts(titan = titan, options = options, dt=thermal_delta_t)
         else:
-            raise ValueError("Ablation Mode can only be 0D, Tetra or PATO")
+            raise ValueError("Ablation Mode can only be 0D, Tetra or PATO, or 0d_amc")
         options.thermal.prev_thermal_time = round(titan.time,5)
+
+def compute_thermal_0D_AMC(titan, options, dt=None):
+    """Documentation for the function.
+:param titan: TITAN simulation object.
+:type titan: object
+:param options: Options or configuration object.
+:type options: object
+:param dt: Numeric value for dt.
+:type dt: float"""
+
+    # devnote: removed some stuff in this function since we must always run augmented state == True
+    # AMC must be run with this option
+    if not options.dynamics.augmented_state: 
+        raise ValueError("Augmented state is set as '{}'. It must be True to use AMC-1 library for ablation".format(options.dynamics.augmented_state))
+
+    Tref = 273
+    # Unity timestep gives us rates instead of integrated values. 
+    dt = 1.0
+        
+    for assembly in titan.assembly:
+
+        for obj in assembly.objects:
+
+            # Assign correct material name, DRAMA to AMC convention
+            amc_material_name=amc_material_map[obj.material_name]
+
+            # Check if pyrolyzing
+            # devnote: Placeholder pyro rate. How to deal with pyrolysis rate/where does it come from?
+            tmp_pyro_rate = 0.0 
+            pyrolysis_rate=tmp_pyro_rate
+            is_pyrolyzing = False
+            if amc_material_name == "CFRP" or amc_material_name == "GFRP":
+                is_pyrolyzing = True
+
+            facet_area = np.linalg.norm(obj.mesh.facet_normal, ord = 2, axis = 1)
+            heatflux = assembly.aerothermo.heatflux[obj.facet_index]
+            Qin = np.sum(heatflux*facet_area)
+            
+            cp  = obj.material.specificHeatCapacity(obj.temperature)
+            emissivity = obj.material.emissivity(obj.temperature)
+
+            Atot = np.sum(facet_area)
+
+            # Estimating the radiation heat-flux
+            Qrad = 5.670373e-8*emissivity*(obj.temperature**4 - Tref**4)*Atot
+
+            # Call AMC-1 in object mode.
+            # Try-Except to deal with hard bounds of some AMC values (pres,temp)
+            try:
+                if is_pyrolyzing:
+                    amc_output = titan.amc_api.compute_pyrolyzing_object_boundary(
+                        material_name = amc_material_name,
+                        wall_temperature = obj.temperature,
+                        pyrolysis_mass_flux = pyrolysis_rate,
+                        aerothermal_heat_flux = Qin, # devnote: I think? or Qin-qrad
+                        fs_velocity = assembly.freestream.velocity,
+                        fs_density = assembly.freestream.density,
+                        fs_temperature = assembly.freestream.temperature,
+                        mach = assembly.freestream.mach,
+                        knudsen = assembly.freestream.knudsen,
+                    )
+                else:
+                    if pyrolysis_rate != 0.0:
+                        raise ValueError("Non-zero pyrolysis rate supplied for non-pyrolizing material object")
+                    amc_output = titan.amc_api.compute_non_pyrolyzing_object_boundary(
+                        material_name = amc_material_name,
+                        wall_temperature = obj.temperature,
+                        pyrolysis_mass_flux = pyrolysis_rate,
+                        aerothermal_heat_flux = Qin,
+                        fs_velocity = assembly.freestream.velocity,
+                        fs_density = assembly.freestream.density,
+                        fs_temperature = assembly.freestream.temperature,
+                        mach = assembly.freestream.mach,
+                        knudsen = assembly.freestream.knudsen,
+                    )
+                # AMC default output is positive dm
+                dm = -1.0 * amc_output["thermochemical_mass_flux"]
+                # devnote: if totalHeatFlow = Qin - Qrad AND meltingHeat same as AblationEnergy:
+                #          then netHeatFlow is rewritten as below
+                #devnote: + dm * obj.material.meltingHeat : + is actually (-) * (-1.0) * (dm)
+                netHeatFlow = amc_output["blowing_factor"] * Qin - Qrad + dm * obj.material.meltingHeat
+                dT = netHeatFlow * dt / (obj.mass * cp)
+                # check for testing
+                if dm > 0.0: 
+                    raise ValueError("dm is supposed to be negative or 0")
+            # Fallback to Native    
+            except Exception as exc: # devnote: likely RuntimeError but set as Exception for more generic catch
+                
+                print(f'{exc} --> Fallback to native 0D method.')
+
+                # Computing temperature change
+                if obj.mass>0:
+                    dT = (Qin-Qrad)*dt/(obj.mass*cp)
+                else: dT = 0.0
+                # Compute mass change if over melting threshold, recompute temperature change
+                if obj.temperature+dT > obj.material.meltingTemperature:
+                    dT_melt = obj.material.meltingTemperature - obj.temperature
+                    melt_Q = (obj.mass*cp)*(dT-dT_melt)
+                    dm = -melt_Q/(obj.material.meltingHeat)
+                    dT = dT_melt
+                else:
+                    dm = 0
+
+            # Final result of mass and temperature rates
+            obj.mdot = dm
+            obj.Tdot = dT
+
+    return
 
 def compute_thermal_0D(titan, options, dt=None):
     """Documentation for the function.
@@ -87,7 +264,6 @@ def compute_thermal_0D(titan, options, dt=None):
             if obj.mass>0:
                 dT = (Qin-Qrad)*dt/(obj.mass*cp)
             else: dT = 0.0
-
 
             if obj.temperature+dT > obj.material.meltingTemperature:
                 dT_melt = obj.material.meltingTemperature - obj.temperature
