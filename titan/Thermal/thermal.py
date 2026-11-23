@@ -166,10 +166,11 @@ def compute_thermal_0D_AMC(titan, options, dt=None):
 
             # Estimating the radiation heat-flux
             Qrad = 5.670373e-8*emissivity*(obj.temperature**4 - Tref**4)*Atot
-
+            
             # Call AMC-1 in object mode.
             # Try-Except to deal with hard bounds of some AMC values (pres,temp)
             try:
+                #start = time.perf_counter_ns()
                 if is_pyrolyzing:
                     amc_output = titan.amc_api.compute_pyrolyzing_object_boundary(
                         material_name = amc_material_name,
@@ -196,16 +197,15 @@ def compute_thermal_0D_AMC(titan, options, dt=None):
                         mach = assembly.freestream.mach,
                         knudsen = assembly.freestream.knudsen,
                     )
+
                 # AMC default output is positive dm
-                dm = -1.0 * amc_output["thermochemical_mass_flux"]
                 # devnote: if totalHeatFlow = Qin - Qrad AND meltingHeat same as AblationEnergy:
                 #          then netHeatFlow is rewritten as below
                 #devnote: + dm * obj.material.meltingHeat : + is actually (-) * (-1.0) * (dm)
+                dm = -1.0 * amc_output["thermochemical_mass_flux"]
                 netHeatFlow = amc_output["blowing_factor"] * Qin - Qrad + dm * obj.material.meltingHeat
                 dT = netHeatFlow * dt / (obj.mass * cp)
-                # check for testing
-                if dm > 0.0: 
-                    raise ValueError("dm is supposed to be negative or 0")
+
             # Fallback to Native    
             except Exception as exc: # devnote: likely RuntimeError but set as Exception for more generic catch
                 

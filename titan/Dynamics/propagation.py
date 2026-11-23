@@ -274,7 +274,7 @@ def update_dynamic_attributes(assembly,state_vector,options, force=False, return
                         component.mass = 0
                     assembly.mesh.vol_density[assembly.mesh.vol_tag == component.id] = component.material.density
                     assembly.aerothermo.temperature[component.facet_index] = component.temperature
-                if recompute_mass: assembly.compute_mass_properties()
+            if recompute_mass: assembly.compute_mass_properties()
 
         # Communicate state to other assembly attributes...
         [latitude, longitude, altitude] = pymap3d.ecef2geodetic(assembly.position[0], assembly.position[1], assembly.position[2],
